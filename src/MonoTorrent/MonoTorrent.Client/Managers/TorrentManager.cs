@@ -551,6 +551,27 @@ namespace MonoTorrent.Client
             }
         }
 
+        async ReusableTask NormalizePartialFilenames ()
+        {
+            foreach (var file in Files) {
+                var fullPath = file.FullPath;
+                var incompleteFullPath = file.FullPath + TorrentFileInfo.IncompleteFileSuffix;
+
+                if (Engine.Settings.UsePartialFiles) {
+                    if (file.BitField.AllTrue) {
+                        if (File.Exists (incompleteFullPath) && !File.Exists (fullPath))
+                            await Engine.DiskManager.MoveFileAsync (incompleteFullPath, fullPath);
+                    } else {
+                        if (File.Exists (fullPath) && !File.Exists (incompleteFullPath))
+                            File.Move (fullPath, incompleteFullPath);
+                    }
+                } else {
+                    if (File.Exists (incompleteFullPath) && !File.Exists (fullPath))
+                        File.Move (incompleteFullPath, fullPath);
+                }
+            }
+        }
+
         public async Task MoveFileAsync (ITorrentFileInfo file, string path)
         {
             Check.File (file);
