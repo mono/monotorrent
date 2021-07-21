@@ -551,6 +551,27 @@ namespace MonoTorrent.Client
             }
         }
 
+        async ReusableTask NormalizePartialFilenames ()
+        {
+            foreach (var file in Files) {
+                var fullPath = file.FullPath;
+                var incompleteFullPath = file.FullPath + TorrentFileInfo.IncompleteFileSuffix;
+
+                if (Engine.Settings.UsePartialFiles) {
+                    if (file.BitField.AllTrue) {
+                        if (File.Exists (incompleteFullPath) && !File.Exists (fullPath))
+                            await Engine.DiskManager.MoveFileAsync (incompleteFullPath, fullPath);
+                    } else {
+                        if (File.Exists (fullPath) && !File.Exists (incompleteFullPath))
+                            File.Move (fullPath, incompleteFullPath);
+                    }
+                } else {
+                    if (File.Exists (incompleteFullPath) && !File.Exists (fullPath))
+                        File.Move (incompleteFullPath, fullPath);
+                }
+            }
+        }
+
         public async Task MoveFileAsync (ITorrentFileInfo file, string path)
         {
             Check.File (file);
@@ -616,9 +637,10 @@ namespace MonoTorrent.Client
 
             // All files marked as 'Normal' priority by default so 'PartialProgressSelector'
             // should be set to 'true' for each piece as all files are being downloaded.
-            Files = Torrent.Files.Select (file =>
-                new TorrentFileInfo (file, Path.Combine (savePath, file.Path))
-            ).Cast<ITorrentFileInfo> ().ToList ().AsReadOnly ();
+            Files = Torrent.Files.Select (file => {
+                var fullPath = Path.Combine (savePath, file.Path);
+                return File.Exists (fullPath) || !Engine.Settings.UsePartialFiles ? new TorrentFileInfo (file, fullPath) : new TorrentFileInfo (file, fullPath + TorrentFileInfo.IncompleteFileSuffix);
+            }).Cast<ITorrentFileInfo> ().ToList ().AsReadOnly ();
 
             PieceManager.Initialise ();
             MetadataTask.SetResult (Torrent);
@@ -856,8 +878,11 @@ namespace MonoTorrent.Client
 
             var files = Files;
             var fileIndex = files.FindFileByPieceIndex (index);
-            for (int i = fileIndex; i < files.Count && files[i].StartPieceIndex <= index; i++)
+            for (int i = fileIndex; i < files.Count && files[i].StartPieceIndex <= index; i++) {
                 ((MutableBitField) files[i].BitField)[index - files[i].StartPieceIndex] = hashPassed;
+                if (files[i].BitField.AllTrue && files[i].FullPath.EndsWith (TorrentFileInfo.IncompleteFileSuffix))
+                    _ = MoveFileAsync (files[i], Path.GetFileNameWithoutExtension (files[i].FullPath));
+            }
 
             if (hashPassed) {
                 List<PeerId> connected = Peers.ConnectedPeers;
